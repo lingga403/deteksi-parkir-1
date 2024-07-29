@@ -1,107 +1,149 @@
-import cv2
+import streamlit as st
+import pandas as pd
+from sklearn.cluster import KMeans
+from sklearn.preprocessing import MinMaxScaler
+from sklearn.metrics import silhouette_score
+from sklearn.decomposition import PCA
+import matplotlib.pyplot as plt
 import numpy as np
-import imutils as im
+import plotly.express as px
 
-#Webcam
-cap	 = cv2.VideoCapture('Parkir.mp4')
+# Fungsi untuk menghitung jarak Euclidean
+def euclidean_distance(point, centroid):
+    return np.sqrt(np.sum((point - centroid)**2))
 
-#count line position
+# Membaca Data
+@st.cache_data
+def load_data(file):
+    return pd.read_csv(file)
 
-blue1 = 20
-blue2 = 139
-red1 = 28
-red2 = 178
-#Initil Substractor
-algo = cv2.createBackgroundSubtractorMOG2()
+# Atur Tema
+st.markdown(
+    """
+    <style>
+    :root {
+        --primary-color: #f0f2f6;
+        --background-color: #ffffff;
+        --secondary-background-color: #D0D0D0;
+        --text-color: #262730;
+        --font: sans-serif;
+    }
+    .reportview-container {
+        background: #f0f2f6;
+    }
+    .markdown-text-container {
+        font-family: sans-serif;
+        color: #262730;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
 
-#min width and etc
-min_width_react=80
-min_heigth_react=80
+# Header
+st.title("Clustering App For Leads Auto2000 Kramat Jati")
+st.write("Upload your CSV file to perform clustering")
 
-detec = []
-offset= 4
-car = 0
-status =[]
+# Melakukan Upload Data
+file = st.file_uploader("Select a CSV file", type=["csv"])
 
+if file is not None:
+    # Load data
+    df = load_data(file)
 
+    # Display data
+    st.write("Upload Data:")
+    st.write(df)
 
-def center_handle(x,y,w,h):
-	x1= int(w/2)
-	y1= int(h/2)
-	cx= x+x1
-	cy= y+y1
-	return cx,cy
+    # Kolom untuk melakukan clustering
+    cols = ['Keinginan memiliki mobil', 'Kesiapan pembayaran booking fee', 'Kapan dapat ditemui secara langsung', 'Frekuseni penggunaan mobil']
+    additional_cols = ['Phone', 'Model', 'Product Desc.', 'Anggaran untuk membeli mobil', 'Metode pembayaran yang diinginkan']
 
+    if all(col in df.columns for col in cols + additional_cols + ['Nama Customer', 'Reference To']):
+        # Membuat clustering data frame
+        clustering_data = df[cols + additional_cols + ['Nama Customer', 'Reference To']]
 
+        # Encode label data kategori
+        mappings = {
+            'Keinginan memiliki mobil': {'0-1 bulan': 2, '1-3 bulan': 1, '3-6 bulan': 0},
+            'Kesiapan pembayaran booking fee': {'minggu ini': 2, 'bulan ini': 1, 'belum menentukan': 0},
+            'Kapan dapat ditemui secara langsung': {'1-2 minggu': 2, '1 bulan': 1, 'belum menentukan': 0},
+            'Frekuseni penggunaan mobil': {'setiap hari': 2, 'diakhir pekan': 1, 'sesekali': 0}
+        }
 
-while True:
-	ret, frame1 = cap.read()
-	roi = frame1[1077: 1917,0: 1917]
-	roi_z = im.resize(roi, width = 320)
-	grey = cv2.cvtColor(roi_z, cv2.COLOR_BGR2GRAY)
-	blur = cv2.GaussianBlur(grey,(5,5),5)
-	frame1 = im.resize(frame1, width = 320)
+        for col, mapping in mappings.items():
+            if col in clustering_data.columns:
+                clustering_data[col] = clustering_data[col].map(mapping)
 
+        # Normalisasi Data
+        scaler = MinMaxScaler()
+        clustering_data[cols] = scaler.fit_transform(clustering_data[cols])
 
+        # Melakukan clustering
+        kmeans = KMeans(
+            n_clusters=3,
+            init=np.array([[0.0, 0.0, 0.0, 0.0], [0.4, 0.4, 0.4, 0.4], [0.8, 0.8, 0.8, 0.8]]),
+            algorithm='elkan',
+            random_state=64,
+            n_init=1,
+            max_iter=100
+        )
+        clustering_data['cluster'] = kmeans.fit_predict(clustering_data[cols])
 
-	# applying on each 	
-	img_sub = algo.apply(blur)
-	dilat = cv2.dilate(img_sub,np.ones((15,15)))
-	kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (20,20))
-	dilatda = cv2.morphologyEx(dilat, cv2.MORPH_CLOSE, kernel)
-	dilatda = cv2.morphologyEx(dilatda, cv2.MORPH_CLOSE, kernel)
-	counterSahpe,h = cv2.findContours(dilatda, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+        # Mapping cluster
+        cluster_mapping = {0: 'low', 1: 'mid', 2: 'hot'}
+        clustering_data['cluster_label'] = clustering_data['cluster'].map(cluster_mapping)
 
+        # Menghitung silhouette score
+        silhouette_avg = silhouette_score(clustering_data[cols], clustering_data['cluster'])
+        st.write("Silhouette score clustering:", silhouette_avg)
+        
+        # Menghitung setiap centroid cluster
+        centroids = kmeans.cluster_centers_
+        st.write("Centroid setiap cluster:")
+        for i, centroid in enumerate(centroids):
+            st.write(f"Cluster {i}: {centroid}")
 
-	cv2.line(roi_z, (0,blue1), (317,blue2), (255,0,0),1)
-	cv2.line(roi_z, (0,red1), (317,red2), (0,0,255),1)
+        # Menampilkan hasil clustering
+        st.write("Hasil clustering:")
+        st.write(clustering_data[['Nama Customer', 'Reference To', 'cluster', 'cluster_label']])
 
-	for (i,c) in enumerate(counterSahpe):
-		(x,y,w,h) = cv2.boundingRect(c)
-		validar_counter = (w>min_width_react) and (h>min_heigth_react)
-		if not validar_counter:
-			continue 
+        # Memanngil kolom kembali
+        ordered_cols = ['Nama Customer', 'Reference To', 'Phone', 'Model', 'Product Desc.', 'Anggaran untuk membeli mobil', 'Metode pembayaran yang diinginkan', 'cluster', 'cluster_label'] + cols
+        clustering_data = clustering_data[ordered_cols]
 
- 
- 
-		cv2.rectangle(roi_z, (x,y), (x+w, y+h), (0,255,0),2)
-		center= center_handle (x,y,w,h)
-		detec.append(center)
-		cv2.circle(roi_z, center,4 , (0,255,255),2)
+        # Menampilkan hasil
+        st.write("Data Final Clustering:")
+        styled_df = clustering_data.style.background_gradient(cmap='coolwarm')
+        st.dataframe(styled_df)
 
-#tes garis deteksi		
-	for (x,y) in detec:
-		if y< (blue1 and blue2 + offset) and y > (blue1 and blue2 - offset):
-			cv2.line(roi_z, (0,20), (317,139), (255,255,255),1) #
-			status.append(1)
-			detec.remove((x,y)) 
+        # Filter berdasarkan label cluster
+        selected_clusters = st.multiselect("Pilih cluster untuk ditampilkan", options=['low', 'mid', 'hot'], default=['low', 'mid', 'hot'])
+        filtered_data = clustering_data[clustering_data['cluster_label'].isin(selected_clusters)]
 
+        # Menampilkan data yang difilter
+        st.write("Data setelah difilter berdasarkan cluster:")
+        st.write(filtered_data)
 
-		elif y< (red1 and red2 + offset) and y>(red1 and red2 - offset):
-			cv2.line(roi_z, (0,28), (317,178), (255,255,255),1)
-			status.append(2)
-			detec.remove((x,y))
+        # Apply PCA to reduce dimensions to 2D
+        try:
+            pca = PCA(n_components=2)
+            pca_components = pca.fit_transform(filtered_data[cols])
+            filtered_data['pca1'] = pca_components[:, 0]
+            filtered_data['pca2'] = pca_components[:, 1]
 
-#algoritmma sekuensial
-	if status ==[1,2]:
-		car+=1 
-		print("jumlah kendaraan saat ini : "+str(car))
-		status.clear()
-
-	elif status ==[2,1]:
-		car-=1
-		print("jumlah kendaraan saat ini : "+str(car))
-		status.clear()
-
-	cv2.imshow('blur', blur)
-	cv2.imshow('grey', grey)
-	cv2.imshow('deteksi', dilatda)
-	cv2.imshow('Ori', frame1)
-	cv2.imshow('roi' ,roi_z)
-
-	if cv2.waitKey(30) & 0xFF == ord('q'):
-            break
-#end
-cap.release()
-cv2.destroyAllWindows()
-    
+            # Plotting the clustering result using PCA scatter plot
+            st.write("PCA Clustering Visualisasi:")
+            fig = px.scatter(
+                filtered_data, 
+                x='pca1', 
+                y='pca2', 
+                color='cluster_label', 
+                hover_data=['Nama Customer', 'Reference To']
+            )
+            st.plotly_chart(fig)
+        except Exception as e:
+            st.write("An error occurred during PCA transformation:")
+            st.write(e)
+    else:
+        st.write("The uploaded CSV file does not contain all the required columns.")
